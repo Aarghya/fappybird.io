@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tappy Tirb - Enhanced Version</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            font-family: Arial, sans-serif;
+        }
+        
+        #game-canvas {
+            background-color: #87CEEB;
+            border: 2px solid #000;
+        }
+        
+        #instructions {
+            position: absolute;
+            top: 20px;
+            color: white;
+            text-align: center;
+            width: 100%;
+            font-size: 16px;
+        }
+        
+        #score-overview {
+            position: absolute;
+            top: 50px;
+            right: 20px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: left;
+            font-size: 14px;
+            max-width: 200px;
+            display: none;
+        }
+        
+        .overview-title {
+            font-weight: bold;
+            font-size: 16px;
+            margin-bottom: 5px;
+            text-align: center;
+        }
+        
+        .score-item {
+            margin: 3px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="instructions">Click or press SPACE to flap | Game starts when you click</div>
+    <canvas id="game-canvas" width="400" height="600"></canvas>
+    <div id="score-overview">
+        <div class="overview-title">Score History</div>
+        <div id="score-list"></div>
+    </div>
+
+    <script>
+        // Get canvas and context
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const scoreOverview = document.getElementById('score-overview');
+        const scoreList = document.getElementById('score-list');
+        
+        // Game variables
+        let gameStarted = false;
+        let gameOver = false;
+        let score = 0;
+        let highScore = 0;
+        let playerName = "Player";
+        let scoreHistory = [];
+        
+        // Bird variables
+        const bird = {
+            x: 100,
+            y: 300,
+            width: 30,
+            height: 30,
+            gravity: 0.3,
+            velocity: 0,
+            jumpPower: 5.5,
+            wingPosition: 0,  // 0 = middle, 1 = up, -1 = down
+            wingFlapping: false,
+            wingFlapTime: 0,
+            wingFlapDuration: 15,  // How long the flap animation lasts in frames
+            beakAnimation: {
+                isChirping: false,
+                openAmount: 0,      // 0 = closed, 1 = fully open
+                chirpDuration: 12,  // How long the chirp animation lasts
+                chirpTime: 0,       // Current time in the chirp animation
+                chirpChance: 0.02   // Chance of random chirp when not jumping
+            },
+            colors: {
+                body: "#800080", // Purple
+                wings: "#FF0000", // Red
+                eyes: "#FFFFFF", // White
+                beak: "#FF7700",  // Orange
+                beakTip: "#FF5500", // Dark orange for beak tip
+                beakInside: "#FF9999" // Pink for inside of beak
+            }
+        };
+        
+        // Pipe variables
+        const pipes = [];
+        const pipeWidth = 60;
+        const pipeGap = 150;
+        const pipeSpeed = 2;
+        
+        // Ground variables
+        const groundHeight = 80;
+        
+        // Death effect variables
+        const particles = [];
+        let shake = false;
+        let shakeTime = 0;
+        
+        // Cookie functions
+        function setCookie(name, value, days) {
+            const date = new Date();
+            date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+            const expires = "expires=" + date.toUTCString();
+            document.cookie = name + "=" + value + ";" + expires + ";path=/";
+        }
+        
+        function getCookie(name) {
+            const cookieName = name + "=";
+            const decodedCookie = decodeURIComponent(document.cookie);
+            const cookieArray = decodedCookie.split(';');
+            for (let i = 0; i < cookieArray.length; i++) {
+                let cookie = cookieArray[i];
+                while (cookie.charAt(0) === ' ') {
+                    cookie = cookie.substring(1);
+                }
+                if (cookie.indexOf(cookieName) === 0) {
+                    return cookie.substring(cookieName.length, cookie.length);
+                }
+            }
+            return "";
+        }
+        
+        // Load player data from cookies
+        function loadPlayerData() {
+            const savedName = getCookie("tappyTirbPlayerName");
+            if (savedName !== "") {
+                playerName = savedName;
+            } else {
+                // Ask for player name on first visit
+                const name = prompt("Welcome to Tappy Tirb! Please enter your name:", "Player");
+                if (name !== null && name.trim() !== "") {
+                    playerName = name;
+                    setCookie("tappyTirbPlayerName", playerName, 365);
+                }
+            }
+            
+            const savedHighScore = getCookie("tappyTirbHighScore");
+            if (savedHighScore !== "") {
+                highScore = parseInt(savedHighScore);
+            }
+            
+            const savedScoreHistory = getCookie("tappyTirbScoreHistory");
+            if (savedScoreHistory !== "") {
+                try {
+                    scoreHistory = JSON.parse(savedScoreHistory);
+                } catch (e) {
+                    scoreHistory = [];
+                }
+            }
+            
+            updateScoreOverview();
+        }
+        
+        // Save player data to cookies
+        function savePlayerData() {
+            setCookie("tappyTirbHighScore", highScore, 365);
+            setCookie("tappyTirbScoreHistory", JSON.stringify(scoreHistory), 365);
+        }
+        
+        // Update score overview panel
+        function updateScoreOverview() {
+            // Clear previous scores
+            scoreList.innerHTML = "";
+            
+            // Add high score
+            const highScoreItem = document.createElement("div");
+            highScoreItem.className = "score-item";
+            highScoreItem.innerHTML = `<b>High Score:</b> ${highScore}`;
+            scoreList.appendChild(highScoreItem);
+            
+            // Add player name
+            const playerItem = document.createElement("div");
+            playerItem.className = "score-item";
+            playerItem.innerHTML = `<b>Player:</b> ${playerName}`;
+            scoreList.appendChild(playerItem);
+            
+            // Add divider
+            const divider = document.createElement("hr");
+            scoreList.appendChild(divider);
+            
+            // Add recent scores (up to 5)
+            const recentScores = scoreHistory.slice(0, 5);
+            if (recentScores.length > 0) {
+                const recentTitle = document.createElement("div");
+                recentTitle.className = "score-item";
+                recentTitle.innerHTML = "<b>Recent Scores:</b>";
+                scoreList.appendChild(recentTitle);
+                
+                recentScores.forEach((scoreData, index) => {
+                    const scoreItem = document.createElement("div");
+                    scoreItem.className = "score-item";
+                    const date = new Date(scoreData.date);
+                    const dateString = `${date.getMonth()+1}/${date.getDate()}`;
+                    scoreItem.innerHTML = `${index+1}. ${scoreData.score} (${dateString})`;
+                    scoreList.appendChild(scoreItem);
+                });
+            }
+            
+            // Show the overview
+            scoreOverview.style.display = "block";
+        }
+        
+        // Function to start game
+        function startGame() {
+            if (!gameStarted && !gameOver) {
+                gameStarted = true;
+                gameLoop();
+            } else if (gameOver) {
+                // Reset game
+                gameOver = false;
+                gameStarted = true;
+                score = 0;
+                bird.y = 300;
+                bird.velocity = 0;
+                bird.wingPosition = 0;
+                bird.wingFlapping = false;
+                bird.beakAnimation.isChirping = false;
+                bird.beakAnimation.openAmount = 0;
+                pipes.length = 0;
+                particles.length = 0;
+                shake = false;
+                gameLoop();
+            }
+        }
+        
+        // Function to end game and save score
+        function endGame() {
+            // Check if it's a high score
+            if (score > highScore) {
+                highScore = score;
+            }
+            
+            // Add to score history
+            scoreHistory.unshift({
+                score: score,
+                date: new Date().toISOString()
+            });
+            
+            // Keep only the last 10 scores
+            if (scoreHistory.length > 10) {
+                scoreHistory = scoreHistory.slice(0, 10);
+            }
+            
+            // Save to cookies
+            savePlayerData();
+            
+            // Update the overview
+            updateScoreOverview();
+        }
+        
+        // Function to make bird jump
+        function jump() {
+            if (gameStarted && !gameOver) {
+                bird.velocity = -bird.jumpPower;
+                // Start wing flap animation
+                bird.wingFlapping = true;
+                bird.wingFlapTime = bird.wingFlapDuration;
+                
+                // Start chirp animation when jumping
+                startChirp();
+            }
+        }
+        
+        // Function to start bird chirping
+        function startChirp() {
+            bird.beakAnimation.isChirping = true;
+            bird.beakAnimation.chirpTime = bird.beakAnimation.chirpDuration;
+        }
+        
+        // Function to update beak animation
+        function updateBeakAnimation() {
+            // Update chirp animation
+            if (bird.beakAnimation.isChirping) {
+                // Update chirp time
+                bird.beakAnimation.chirpTime--;
+                
+                // Calculate how open the beak should be based on chirp time
+                if (bird.beakAnimation.chirpTime > bird.beakAnimation.chirpDuration * 0.5) {
+                    // Opening phase
+                    bird.beakAnimation.openAmount = 1 - (bird.beakAnimation.chirpTime - bird.beakAnimation.chirpDuration * 0.5) / (bird.beakAnimation.chirpDuration * 0.5);
+                } else {
+                    // Closing phase
+                    bird.beakAnimation.openAmount = bird.beakAnimation.chirpTime / (bird.beakAnimation.chirpDuration * 0.5);
+                }
+                
+                // Check if chirp is finished
+                if (bird.beakAnimation.chirpTime <= 0) {
+                    bird.beakAnimation.isChirping = false;
+                    bird.beakAnimation.openAmount = 0;
+                }
+            } else if (!gameOver && gameStarted) {
+                // Random chance to chirp when not already chirping
+                if (Math.random() < bird.beakAnimation.chirpChance) {
+                    startChirp();
+                }
+            }
+        }
+        
+        // Function to add a new pipe
+        function addPipe() {
+            const minHeight = 50;
+            const maxHeight = canvas.height - groundHeight - pipeGap - minHeight;
+            const height = Math.floor(Math.random() * (maxHeight - minHeight + 1) + minHeight);
+            
+            pipes.push({
+                x: canvas.width,
+                topHeight: height,
+                bottomY: height + pipeGap,
+                passed: false
+            });
+        }
+        
+        // Function to check collision
+        function checkCollision(pipe) {
+            const birdRight = bird.x + bird.width / 2;
+            const birdLeft = bird.x - bird.width / 2;
+            const birdTop = bird.y - bird.height / 2;
+            const birdBottom = bird.y + bird.height / 2;
+            
+            const pipeLeft = pipe.x;
+            const pipeRight = pipe.x + pipeWidth;
+            
+            // Check if bird collides with pipe
+            if (birdRight > pipeLeft && birdLeft < pipeRight) {
+                if (birdTop < pipe.topHeight || birdBottom > pipe.bottomY) {
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+        
+        // Function to handle bird death
+        function birdDeath() {
+            gameOver = true;
+            shake = true;
+            shakeTime = 10;
+            
+            // Save score
+            endGame();
+            
+            // Create explosion particles
+            for (let i = 0; i < 20; i++) {
+                particles.push({
+                    x: bird.x,
+                    y: bird.y,
+                    size: Math.random() * 5 + 2,
+                    speedX: (Math.random() - 0.5) * 6,
+                    speedY: (Math.random() - 0.5) * 6,
+                    color: i % 3 === 0 ? '#FF0000' : (i % 3 === 1 ? '#FF8800' : '#FFFF00'),
+                    life: 30
+                });
+            }
+        }
+        
+        // Function to update particles
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Function to draw particles
+        function drawParticles() {
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size * (p.life / 30), 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+        
+        // Function to update wing animation
+        function updateWingAnimation() {
+            // If the bird is flapping
+            if (bird.wingFlapping) {
+                bird.wingFlapTime--;
+                
+                // Determine wing position based on the flap animation time
+                if (bird.wingFlapTime > bird.wingFlapDuration * 0.7) {
+                    bird.wingPosition = 1; // Wings up at the start of flap
+                } else if (bird.wingFlapTime > bird.wingFlapDuration * 0.4) {
+                    bird.wingPosition = 0; // Wings middle in the middle of flap
+                } else if (bird.wingFlapTime > 0) {
+                    bird.wingPosition = -1; // Wings down at the end of flap
+                } else {
+                    bird.wingFlapping = false;
+                    bird.wingPosition = 0; // Reset to middle when done
+                }
+            } else {
+                // If bird is falling (positive velocity), show wings up position
+                if (bird.velocity > 2) {
+                    bird.wingPosition = -1;
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Apply screen shake if active
+            if (shake) {
+                const shakeX = Math.random() * 10 - 5;
+                const shakeY = Math.random() * 10 - 5;
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+                shakeTime--;
+                if (shakeTime <= 0) {
+                    shake = false;
+                }
+            }
+            
+            // Draw sky background
+            ctx.fillStyle = '#87CEEB';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Add new pipe if needed
+            if (gameStarted && !gameOver && (pipes.length === 0 || pipes[pipes.length - 1].x < canvas.width - 200)) {
+                addPipe();
+            }
+            
+            // Update and draw pipes
+            for (let i = pipes.length - 1; i >= 0; i--) {
+                const pipe = pipes[i];
+                
+                if (gameStarted && !gameOver) {
+                    pipe.x -= pipeSpeed;
+                }
+                
+                // Check if pipe is off screen
+                if (pipe.x + pipeWidth < 0) {
+                    pipes.splice(i, 1);
+                    continue;
+                }
+                
+                // Check if bird passed the pipe
+                if (!pipe.passed && pipe.x + pipeWidth < bird.x) {
+                    pipe.passed = true;
+                    score++;
+                }
+                
+                // Check collision
+                if (!gameOver && checkCollision(pipe)) {
+                    birdDeath();
+                }
+                
+                // Draw top pipe
+                ctx.fillStyle = '#00AA00';
+                ctx.fillRect(pipe.x, 0, pipeWidth, pipe.topHeight);
+                
+                // Draw pipe cap
+                ctx.fillStyle = '#008800';
+                ctx.fillRect(pipe.x - 3, pipe.topHeight - 15, pipeWidth + 6, 15);
+                
+                // Draw bottom pipe
+                ctx.fillStyle = '#00AA00';
+                ctx.fillRect(pipe.x, pipe.bottomY, pipeWidth, canvas.height - pipe.bottomY);
+                
+                // Draw pipe cap
+                ctx.fillStyle = '#008800';
+                ctx.fillRect(pipe.x - 3, pipe.bottomY, pipeWidth + 6, 15);
+            }
+            
+            // Update bird position
+            if (gameStarted && !gameOver) {
+                bird.velocity += bird.gravity;
+                bird.y += bird.velocity;
+                
+                // Update wing animation
+                updateWingAnimation();
+                
+                // Update beak animation
+                updateBeakAnimation();
+            }
+            
+            // Check floor collision
+            if (bird.y + bird.height / 2 > canvas.height - groundHeight) {
+                bird.y = canvas.height - groundHeight - bird.height / 2;
+                if (!gameOver) {
+                    birdDeath();
+                }
+            }
+            
+            // Check ceiling collision
+            if (bird.y - bird.height / 2 < 0) {
+                bird.y = bird.height / 2;
+                bird.velocity = 0;
+            }
+            
+            // Calculate bird rotation based on velocity
+            const rotation = Math.min(Math.PI/4, Math.max(-Math.PI/6, bird.velocity * 0.08));
+            
+            // Draw bird
+            ctx.save();
+            ctx.translate(bird.x, bird.y);
+            ctx.rotate(rotation);
+            
+            // Bird body - now purple
+            ctx.fillStyle = gameOver ? '#990099' : bird.colors.body;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, bird.width / 2, bird.height / 2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Bird wing - now red
+            ctx.fillStyle = gameOver ? '#CC0000' : bird.colors.wings;
+            ctx.beginPath();
+            
+            // Wing position changes based on animation state
+            let wingY = 0;
+            if (bird.wingPosition === 1) {
+                // Wing up
+                wingY = -bird.height / 3;
+            } else if (bird.wingPosition === -1) {
+                // Wing down
+                wingY = bird.height / 3;
+            }
+            
+            // Draw wing as an ellipse
+            ctx.beginPath();
+            ctx.ellipse(-2, wingY, bird.width / 3, bird.height / 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Bird eye - now white
+            ctx.fillStyle = bird.colors.eyes;
+            ctx.beginPath();
+            ctx.ellipse(bird.width/4, -bird.height/6, 4, 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Eye pupil (black)
+            ctx.fillStyle = '#000000';
+            ctx.beginPath();
+            ctx.ellipse(bird.width/4, -bird.height/6, 2, 2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Calculate beak opening based on animation
+            const beakOpenAmount = bird.beakAnimation.openAmount * 4; // Max opening of 4 pixels
+            
+            // Draw more realistic beak with animation
+            ctx.save();
+            ctx.translate(bird.width/2, 0);
+            
+            // Upper beak (doesn't move)
+            ctx.fillStyle = bird.colors.beak;
+            ctx.beginPath();
+            ctx.moveTo(0, -5);
+            ctx.bezierCurveTo(5, -6, 10, -4, 12, -2);  // Curved top of upper beak
+            ctx.lineTo(12, 0);                         // Front edge
+            ctx.lineTo(0, 0);                          // Back to attachment point
+            ctx.closePath();
+            ctx.fill();
+            
+            // Upper beak tip/ridge
+            ctx.fillStyle = bird.colors.beakTip;
+            ctx.beginPath();
+            ctx.moveTo(12, -2);
+            ctx.lineTo(12, 0);
+            ctx.lineTo(10, -1);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Inside of upper beak (only visible when open)
+            if (beakOpenAmount > 0) {
+                ctx.fillStyle = bird.colors.beakInside;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(10, -1);
+                ctx.lineTo(0, 1);
+                ctx.closePath();
+                ctx.fill();
+            }
+            
+            // Lower beak (moves with animation)
+            ctx.fillStyle = bird.colors.beak;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);                          // Start at attachment point
+            ctx.lineTo(10, 1 + beakOpenAmount);        // Bottom point of beak, moves down when chirping
+            ctx.lineTo(12, 0 + beakOpenAmount/2);      // Front edge, moves slightly with opening
+            ctx.lineTo(0, 0);                          // Back to attachment point
+            ctx.closePath();
+            ctx.fill();
+            
+            // Lower beak tip
+            ctx.fillStyle = bird.colors.beakTip;
+            ctx.beginPath();
+            ctx.moveTo(10, 1 + beakOpenAmount);
+            ctx.lineTo(12, 0 + beakOpenAmount/2);
+            ctx.lineTo(9, 1 + beakOpenAmount * 0.8);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Inside of lower beak (visible when open)
+            if (beakOpenAmount > 0) {
+                ctx.fillStyle = bird.colors.beakInside;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(9, 1 + beakOpenAmount * 0.8);
+                ctx.lineTo(0, 1);
+                ctx.closePath();
+                ctx.fill();
+            }
+            
+            ctx.restore(); // Restore from beak translation
+            
+            ctx.restore(); // Restore from bird rotation and translation
+            
+            // Update and draw particles
+            updateParticles();
+            drawParticles();
+            
+            // Draw ground
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(0, canvas.height - groundHeight, canvas.width, groundHeight);
+            
+            // Draw grass on top of ground
+            ctx.fillStyle = '#00AA00';
+            ctx.fillRect(0, canvas.height - groundHeight, canvas.width, 10);
+            
+            // Draw score
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '30px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(score, canvas.width / 2, 50);
+            
+            // Draw high score
+            ctx.fillStyle = '#FFDD00';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Hi-Score: ${highScore}`, 10, 30);
+            
+            // Draw player name
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Player: ${playerName}`, 10, 50);
+            
+            // Draw start message
+            if (!gameStarted && !gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '30px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('TAPPY TIRB', canvas.width / 2, canvas.height / 2 - 30);
+                ctx.font = '20px Arial';
+                ctx.fillText('Click or press SPACE to start', canvas.width / 2, canvas.height / 2 + 20);
+            }
+            
+            // Draw game over message
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '30px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 30);
+                ctx.font = '20px Arial';
+                ctx.fillText(`Score: ${score}`, canvas.width / 2, canvas.height / 2 + 10);
+                ctx.fillText('Click or press SPACE to restart', canvas.width / 2, canvas.height / 2 + 50);
+            }
+            
+            // Restore canvas if shaking
+            if (shake) {
+                ctx.restore();
+            }
+            
+            // Continue game loop
+            if (gameStarted) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Event listeners
+        document.addEventListener('keydown', event => {
+            if (event.code === 'Space') {
+                if (!gameStarted || gameOver) {
+                    startGame();
+                } else {
+                    jump();
+                }
+            }
+            
+            // Press 'O' to toggle score overview
+            if (event.code === 'KeyO') {
+                if (scoreOverview.style.display === "none" || scoreOverview.style.display === "") {
+                    scoreOverview.style.display = "block";
+                } else {
+                    scoreOverview.style.display = "none";
+                }
+            }
+        });
+        
+        canvas.addEventListener('click', () => {
+            if (!gameStarted || gameOver) {
+                startGame();
+            } else {
+                jump();
+            }
+        });
+        
+        // Load player data and start the game
+        loadPlayerData();
+        gameLoop();
+    </script>
+</body>
+</html>
